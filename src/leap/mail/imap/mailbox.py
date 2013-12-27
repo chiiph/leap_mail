@@ -18,6 +18,8 @@
 Soledad Mailbox.
 """
 import logging
+import time
+
 from collections import defaultdict
 
 from twisted.internet import defer
@@ -515,6 +517,17 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
         session is the first session to be notified about a message,
         then that message SHOULD be considered recent.
         """
+        # TODO this fucker, for the sake of correctness, is messing with
+        # the whole collection of flag docs.
+
+        # Possible ways of action:
+        # 1. Ignore it, we want fun.
+        # 2. Trigger it with a delay
+        # 3. Route it through a queue with lesser priority than the
+        #    regularar writer.
+
+        # hmm let's try 2. in a quickndirty way...
+        time.sleep(1)
         log.msg('unsetting recent flags...')
         for msg in self.messages.get_recent():
             msg.removeFlags((fields.RECENT_FLAG,))

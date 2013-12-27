@@ -29,6 +29,7 @@ from zope.interface import implements
 from zope.proxy import sameProxiedObjects
 
 from leap.common.check import leap_assert, leap_assert_type
+from leap.common.decorators import memoized_method
 from leap.common.mail import get_email_charset
 from leap.mail.decorators import deferred
 from leap.mail.imap.index import IndexedDB
@@ -47,6 +48,168 @@ def first(things):
         return things[0]
     except (IndexError, TypeError):
         return None
+
+
+class MessageBody(object):
+    """
+    IMessagePart implementor for the main
+    body of a multipart message.
+
+    Excusatio non petita: see the interface documentation.
+    """
+
+    implements(imap4.IMessagePart)
+
+    def __init__(self, fdoc, bdoc):
+        self._fdoc = fdoc
+        self._bdoc = bdoc
+
+    def getSize(self):
+        return len(self._bdoc.content[fields.BODY_KEY])
+
+    def getBodyFile(self):
+        fd = StringIO.StringIO()
+        body = self._bdoc.content[fields.BODY_KEY]
+        charset = self._get_charset(body)
+        try:
+            body = body.encode(charset)
+        except (UnicodeEncodeError, UnicodeDecodeError) as e:
+            logger.error("Unicode error {0}".format(e))
+            body = body.encode(charset, 'replace')
+        fd.write(body)
+        fd.seek(0)
+        return fd
+
+    @memoized_method
+    def _get_charset(self, stuff):
+        return get_email_charset(unicode(stuff))
+
+    def getHeaders(self, negate, *names):
+        return {}
+
+    def isMultipart(self):
+        return False
+
+    def getSubPart(self, part):
+        return None
+
+
+class MessageAttachment(object):
+
+    implements(imap4.IMessagePart)
+
+    def __init__(self, msg):
+        """
+        Initializes the messagepart with a Message instance.
+        :param msg: a message instance
+        :type msg: Message
+        """
+        self._msg = msg
+
+    def getSize(self):
+        """
+        Return the total size, in octets, of this message part.
+
+        :return: size of the message, in octets
+        :rtype: int
+        """
+        if not self._msg:
+            return 0
+        return len(self._msg.as_string())
+
+    def getBodyFile(self):
+        """
+        Retrieve a file object containing only the body of this message.
+
+        :return: file-like object opened for reading
+        :rtype: StringIO
+        """
+        fd = StringIO.StringIO()
+        if self._msg:
+            body = self._msg.get_payload()
+        else:
+            logger.debug("Empty message!")
+            body = ""
+
+        # XXX should only do the dance if we're sure it's
+        # content/text-plain!!!
+        #charset = self._get_charset(body)
+        #try:
+            #body = body.encode(charset)
+        #except (UnicodeEncodeError, UnicodeDecodeError) as e:
+            #logger.error("Unicode error {0}".format(e))
+            #body = body.encode(charset, 'replace')
+        fd.write(body)
+        fd.seek(0)
+        return fd
+
+    @memoized_method
+    def _get_charset(self, stuff):
+        # TODO put in a common class with LeapMessage
+        """
+        Gets (guesses?) the charset of a payload.
+
+        :param stuff: the stuff to guess about.
+        :type stuff: basestring
+        :returns: charset
+        """
+        # XXX existential doubt 1. wouldn't be smarter to
+        # peek into the mail headers?
+        # XXX existential doubt 2. shouldn't we make the scope
+        # of the decorator somewhat more persistent?
+        # ah! yes! and put memory bounds.
+        return get_email_charset(unicode(stuff))
+
+    def getHeaders(self, negate, *names):
+        """
+        Retrieve a group of message headers.
+
+        :param names: The names of the headers to retrieve or omit.
+        :type names: tuple of str
+
+        :param negate: If True, indicates that the headers listed in names
+                       should be omitted from the return value, rather
+                       than included.
+        :type negate: bool
+
+        :return: A mapping of header field names to header field values
+        :rtype: dict
+        """
+        if not self._msg:
+            return {}
+        headers = dict(self._msg.items())
+        names = map(lambda s: s.upper(), names)
+        if negate:
+            cond = lambda key: key.upper() not in names
+        else:
+            cond = lambda key: key.upper() in names
+
+        # unpack and filter original dict by negate-condition
+        filter_by_cond = [
+            map(str, (key, val)) for
+            key, val in headers.items()
+            if cond(key)]
+        return dict(filter_by_cond)
+
+    def isMultipart(self):
+        """
+        Return True if this message is multipart.
+        """
+        return self._msg.is_multipart()
+
+    def getSubPart(self, part):
+        """
+        Retrieve a MIME submessage
+
+        :type part: C{int}
+        :param part: The number of the part to retrieve, indexed from 0.
+        :raise IndexError: Raised if the specified part does not exist.
+        :raise TypeError: Raised if this message is not multipart.
+        :rtype: Any object implementing C{IMessagePart}.
+        :return: The specified sub-part.
+        """
+        return self._msg.get_payload()
+        #???[part]
 
 
 class LeapMessage(fields, MailParser, MBoxParser):
@@ -221,9 +384,13 @@ class LeapMessage(fields, MailParser, MBoxParser):
         :rtype: StringIO
         """
         fd = StringIO.StringIO()
-        body = self._bdoc.content.get(self.BODY_KEY, "")
-        # XXX we should cache this! or get from headers
-        charset = get_email_charset(unicode(body))
+        bdoc = self._bdoc
+        if bdoc:
+            body = self._bdoc.content.get(self.BODY_KEY, "")
+        else:
+            body = ""
+
+        charset = self._get_charset(body)
         try:
             body = body.encode(charset)
         except (UnicodeEncodeError, UnicodeDecodeError) as e:
@@ -232,6 +399,22 @@ class LeapMessage(fields, MailParser, MBoxParser):
         fd.write(body)
         fd.seek(0)
         return fd
+
+    @memoized_method
+    def _get_charset(self, stuff):
+        """
+        Gets (guesses?) the charset of a payload.
+
+        :param stuff: the stuff to guess about.
+        :type stuff: basestring
+        :returns: charset
+        """
+        # XXX existential doubt 1. wouldn't be smarter to
+        # peek into the mail headers?
+        # XXX existential doubt 2. shouldn't we make the scope
+        # of the decorator somewhat more persistent?
+        # ah! yes! and put memory bounds.
+        return get_email_charset(unicode(stuff))
 
     def getSize(self):
         """
@@ -267,6 +450,8 @@ class LeapMessage(fields, MailParser, MBoxParser):
         :rtype: dict
         """
         headers = self._get_headers()
+        if not headers:
+            return {'content-type': ''}
         names = map(lambda s: s.upper(), names)
         if negate:
             cond = lambda key: key.upper() not in names
@@ -275,7 +460,7 @@ class LeapMessage(fields, MailParser, MBoxParser):
 
         # unpack and filter original dict by negate-condition
         filter_by_cond = [
-            map(str, (key, val)) for
+            map(lambda s: str(s).lower(), (key, val)) for
             key, val in headers.items()
             if cond(key)]
         return dict(filter_by_cond)
@@ -315,10 +500,22 @@ class LeapMessage(fields, MailParser, MBoxParser):
         :rtype: Any object implementing C{IMessagePart}.
         :return: The specified sub-part.
         """
+        logger.debug("Getting subpart: %s" % part)
         if not self.isMultipart():
             raise TypeError
-        # XXX should wrap IMessagePart
-        return self._get_attachment_doc(part)
+
+        if part == 0:
+            # Let's get the first part, which
+            # is really the body.
+            return MessageBody(self._fdoc, self._bdoc)
+
+        attach_doc = self._get_attachment_doc(part)
+        if not attach_doc:
+            # so long and thanks for all the fish
+            logger.debug("...not today")
+            raise IndexError
+        msg_part = self._get_parsed_msg(attach_doc.content[self.RAW_KEY])
+        return MessageAttachment(msg_part)
 
     #
     # accessors
@@ -332,8 +529,7 @@ class LeapMessage(fields, MailParser, MBoxParser):
         flag_docs = self._soledad.get_from_index(
             fields.TYPE_MBOX_UID_IDX,
             fields.TYPE_FLAGS_VAL, self._mbox, str(self._uid))
-        flag_doc = flag_docs[0] if flag_docs else None
-        return flag_doc
+        return first(flag_docs)
 
     def _get_headers_doc(self):
         """
@@ -341,10 +537,9 @@ class LeapMessage(fields, MailParser, MBoxParser):
         message.
         """
         head_docs = self._soledad.get_from_index(
-            fields.TYPE_HASH_IDX,
+            fields.TYPE_C_HASH_IDX,
             fields.TYPE_HEADERS_VAL, str(self._chash))
-        head_doc = head_docs[0] if head_docs else None
-        return head_doc
+        return first(head_docs)
 
     def _get_body_doc(self):
         """
@@ -352,10 +547,9 @@ class LeapMessage(fields, MailParser, MBoxParser):
         message.
         """
         body_docs = self._soledad.get_from_index(
-            fields.TYPE_HASH_IDX,
+            fields.TYPE_C_HASH_IDX,
             fields.TYPE_MESSAGE_VAL, str(self._chash))
-        body_doc = body_docs[0] if body_docs else None
-        return body_doc
+        return first(body_docs)
 
     def _get_num_parts(self):
         """
@@ -374,22 +568,42 @@ class LeapMessage(fields, MailParser, MBoxParser):
         :param part: the part number for the multipart message.
         :type part: int
         """
+        try:
+            phash = self._hdoc.content[self.PARTS_MAP_KEY][str(part)]
+        except KeyError:
+            # this is the remnant of a debug session until
+            # I found that the index is actually a string...
+            # It should be safe to just raise the KeyError now,
+            # but leaving it here while the blood is fresh...
+            logger.warning("We expected a phash in the "
+                           "index %s, but noone found" % (part, ))
+            logger.debug(self._hdoc.content[self.PARTS_MAP_KEY])
+            return None
         attach_docs = self._soledad.get_from_index(
-            fields.TYPE_HASH_PART_IDX,
-            fields.TYPE_HEADERS_VAL, str(self._chash), str(part))
-        attach_doc = attach_docs[0] if attach_docs else None
-        return attach_doc
+            fields.TYPE_P_HASH_IDX,
+            fields.TYPE_ATTACHMENT_VAL, str(phash))
+
+        # The following is true for the fist owner.
+        # We could use this relationship to flag the "owner"
+        # and orphan when we delete it.
+
+        #attach_docs = self._soledad.get_from_index(
+            #fields.TYPE_C_HASH_PART_IDX,
+            #fields.TYPE_ATTACHMENT_VAL, str(self._chash), str(part))
+        return first(attach_docs)
 
     def _get_raw_msg(self):
         """
         Return the raw msg.
         :rtype: basestring
         """
+        # TODO deprecate this.
         return self._bdoc.content.get(self.RAW_KEY, '')
 
     def __getitem__(self, key):
         """
-        Return the content of the message document.
+        Return an item from the content of the flags document,
+        for convenience.
 
         :param key: The key
         :type key: str
@@ -437,11 +651,18 @@ class LeapMessage(fields, MailParser, MBoxParser):
         """
         fd = self._get_flags_doc()
         hd = self._get_headers_doc()
-        bd = self._get_body_doc()
-        docs = [fd, hd, bd]
-        for pn in range(self._get_num_parts()[1:]):
-            ad = self._get_attachment_doc(pn)
-            docs.append(ad)
+        #bd = self._get_body_doc()
+        #docs = [fd, hd, bd]
+        docs = [fd, hd]
+
+        # XXX For the moment we are only removing the flags and headers
+        # docs. The rest we leave there polluting your hard disk,
+        # until we think about a good way of deorphaning.
+        # Maybe a crawler of unreferenced docs.
+
+        #for pn in range(self._get_num_parts()[1:]):
+            #ad = self._get_attachment_doc(pn)
+            #docs.append(ad)
         for d in docs:
             self._soledad.delete_doc(d)
 
@@ -458,6 +679,8 @@ SoledadWriterPayload = namedtuple(
 
 SoledadWriterPayload.CREATE = 1
 SoledadWriterPayload.PUT = 2
+SoledadWriterPayload.BODY_CREATE = 3
+SoledadWriterPayload.ATTACHMENT_CREATE = 4
 
 
 class SoledadDocWriter(object):
@@ -487,19 +710,93 @@ class SoledadDocWriter(object):
         empty = queue.empty()
         while not empty:
             item = queue.get()
+            call = None
+            payload = item.payload
+
             if item.mode == SoledadWriterPayload.CREATE:
                 call = self._soledad.create_doc
+            elif item.mode == SoledadWriterPayload.BODY_CREATE:
+                if not self._body_does_exist(payload):
+                    call = self._soledad.create_doc
+            elif item.mode == SoledadWriterPayload.ATTACHMENT_CREATE:
+                if not self._attachment_does_exist(payload):
+                    call = self._soledad.create_doc
             elif item.mode == SoledadWriterPayload.PUT:
                 call = self._soledad.put_doc
 
-            # should handle errors
-            try:
-                call(item.payload)
-            except u1db_errors.RevisionConflict as exc:
-                logger.error("Error: %r" % (exc,))
-                raise exc
+            # XXX delete?
+
+            if call:
+                # should handle errors
+                try:
+                    call(item.payload)
+                except u1db_errors.RevisionConflict as exc:
+                    logger.error("Error: %r" % (exc,))
+                    raise exc
 
             empty = queue.empty()
+
+    """
+    Message deduplication.
+
+    We do a query for the content hashes before writing to our beloved
+    slcipher backend of Soledad. This means, by now, that:
+
+    1. We will not store the same attachment twice, only the hash of it.
+    2. We will not store the same message body twice, only the hash of it.
+
+    The first case is useful if you are always receiving the same old memes
+    from unwary friends that still have not discovered that 4chan is the
+    generator of the internet. The second will save your day if you have
+    initiated session with the same account in two different machines. I also
+    wonder why would you do that, but let's respect each other choices, like
+    with the religious celebrations, and assume that one day we'll be able
+    to run Bitmask in completely free phones. Yes, I mean that, the whole GSM
+    Stack.
+    """
+
+    def _body_does_exist(self, doc):
+        """
+        Check whether we already have a body payload with this hash in our
+        database.
+
+        :param doc: tentative body document
+        :type doc: dict
+        :returns: True if that happens, False otherwise.
+        """
+        chash = doc[fields.CONTENT_HASH_KEY]
+        body_docs = self._soledad.get_from_index(
+            fields.TYPE_C_HASH_IDX,
+            fields.TYPE_MESSAGE_VAL, str(chash))
+        if not body_docs:
+            return False
+        if len(body_docs) != 1:
+            logger.warning("Found more than one copy of chash %s!"
+                           % (chash,))
+        logger.debug("Found body doc with that hash! Skipping save!")
+        return True
+
+    def _attachment_does_exist(self, doc):
+        """
+        Check whether we already have an attachment payload with this hash
+        in our database.
+
+        :param doc: tentative body document
+        :type doc: dict
+        :returns: True if that happens, False otherwise.
+        """
+        phash = doc[fields.PAYLOAD_HASH_KEY]
+        attach_docs = self._soledad.get_from_index(
+            fields.TYPE_P_HASH_IDX,
+            fields.TYPE_ATTACHMENT_VAL, str(phash))
+        if not attach_docs:
+            return False
+
+        if len(attach_docs) != 1:
+            logger.warning("Found more than one copy of phash %s!"
+                           % (phash,))
+        logger.debug("Found attachment doc with that hash! Skipping save!")
+        return True
 
 
 class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
@@ -538,6 +835,7 @@ class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
 
             fields.HEADERS_KEY: {},
             fields.NUM_PARTS_KEY: 0,
+            fields.PARTS_MAP_KEY: {},
             fields.DATE_KEY: "",
             fields.SUBJECT_KEY: ""
         },
@@ -647,11 +945,12 @@ class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
         raw_str = msg.as_string()
         chash = self._get_hash(msg)
         multi = msg.is_multipart()
+
         if multi:
             body = first(msg.get_payload()).get_payload()
         else:
             body = msg.get_payload()
-        logger.debug("adding. is multipart:%s" % multi)
+        logger.debug("adding msg (multipart:%s)" % multi)
 
         # flags doc ---------------------------------------
         fd[self.MBOX_KEY] = self.mbox
@@ -686,7 +985,8 @@ class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
         # we can rebuild the original message from the parts.
         bd[self.RAW_KEY] = raw_str
 
-        docs = [fd, hd, bd]
+        docs = [fd, hd]
+        attaches = []
 
         # attachment docs
         if multi:
@@ -700,18 +1000,29 @@ class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
                 phash = self._get_hash(part_msg)
                 att_doc[self.PAYLOAD_HASH_KEY] = phash
                 att_doc[self.RAW_KEY] = part_msg.as_string()
-                docs.append(att_doc)
 
+                # keep a pointer to the payload hash in the
+                # headers doc, under the parts_map
+                hd[self.PARTS_MAP_KEY][str(index)] = phash
+                attaches.append(att_doc)
+
+        # Saving ... -------------------------------
         # ok, there we go...
         logger.debug('enqueuing message for write')
         ptuple = SoledadWriterPayload
 
-        # XXX actually, we should be smart...
-        # 1. check for duplicates in the body doc
-        # 2. check for duplicates in the attach doc
+        # first, regular docs: flags and headers
         for doc in docs:
             self.soledad_writer.put(ptuple(
                 mode=ptuple.CREATE, payload=doc))
+        # second, try to create body doc.
+        self.soledad_writer.put(ptuple(
+            mode=ptuple.BODY_CREATE, payload=bd))
+        # and last, but not least, try to create
+        # attachment docs if not already there.
+        for at in attaches:
+            self.soledad_writer.put(ptuple(
+                mode=ptuple.ATTACHMENT_CREATE, payload=at))
 
     def remove(self, msg):
         """

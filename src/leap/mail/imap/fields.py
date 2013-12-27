@@ -43,6 +43,7 @@ class WithMsgFields(object):
     # headers
     HEADERS_KEY = "headers"
     NUM_PARTS_KEY = "numparts"
+    PARTS_MAP_KEY = "partmap"
     DATE_KEY = "date"
     SUBJECT_KEY = "subject"
 
@@ -71,7 +72,6 @@ class WithMsgFields(object):
 
     INBOX_VAL = "inbox"
 
-
     # Flags in Mailbox and Message
     SEEN_FLAG = "\\Seen"
     RECENT_FLAG = "\\Recent"
@@ -95,8 +95,9 @@ class WithMsgFields(object):
     TYPE_SUBS_IDX = 'by-type-and-subscribed'
     TYPE_MBOX_SEEN_IDX = 'by-type-and-mbox-and-seen'
     TYPE_MBOX_RECT_IDX = 'by-type-and-mbox-and-recent'
-    TYPE_HASH_IDX = 'by-type-and-hash'
-    TYPE_HASH_PART_IDX = 'by-type-and-hash-and-partnumber'  # attachments
+    TYPE_C_HASH_IDX = 'by-type-and-contenthash'
+    TYPE_C_HASH_PART_IDX = 'by-type-and-contenthash-and-partnumber'
+    TYPE_P_HASH_IDX = 'by-type-and-payloadhash'
 
     # Tomas created the `recent and seen index`, but the semantic is not too
     # correct since the recent flag is volatile.
@@ -104,7 +105,8 @@ class WithMsgFields(object):
 
     KTYPE = TYPE_KEY
     MBOX_VAL = TYPE_MBOX_VAL
-    HASH_VAL = CONTENT_HASH_KEY
+    CHASH_VAL = CONTENT_HASH_KEY
+    PHASH_VAL = PAYLOAD_HASH_KEY
     PART_VAL = PART_NUMBER_KEY
 
     INDEXES = {
@@ -117,9 +119,11 @@ class WithMsgFields(object):
         TYPE_SUBS_IDX: [KTYPE, 'bool(subscribed)'],
 
         # content, headers doc
-        TYPE_HASH_IDX: [KTYPE, HASH_VAL],
+        TYPE_C_HASH_IDX: [KTYPE, CHASH_VAL],
         # attachment docs
-        TYPE_HASH_PART_IDX: [KTYPE, HASH_VAL, PART_VAL],
+        TYPE_C_HASH_PART_IDX: [KTYPE, CHASH_VAL, PART_VAL],
+        # attachment payload dedup
+        TYPE_P_HASH_IDX: [KTYPE, PHASH_VAL],
 
         # messages
         TYPE_MBOX_SEEN_IDX: [KTYPE, MBOX_VAL, 'bool(seen)'],

@@ -38,14 +38,17 @@ class MailParser(object):
         """
         self._parser = Parser()
 
-    def _get_parsed_msg(self, raw):
+    def _get_parsed_msg(self, raw, headersonly=False):
         """
         Return a parsed Message.
 
         :param raw: the raw string to parse
         :type raw: basestring, or StringIO object
+
+        :param headersonly: True for parsing only the headers.
+        :type headersonly: bool
         """
-        msg = self._get_parser_fun(raw)(raw, True)
+        msg = self._get_parser_fun(raw)(raw, headersonly=headersonly)
         return msg
 
     def _get_hash(self, msg):

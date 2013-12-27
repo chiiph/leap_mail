@@ -527,6 +527,7 @@ class LeapIncomingMail(object):
         """
         log.msg('adding message to local db')
         doc, data = msgtuple
+
         if isinstance(data, list):
             data = data[0]
 
