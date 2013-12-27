@@ -19,9 +19,13 @@ Mail parser mixins.
 """
 import cStringIO
 import StringIO
+import hashlib
 import re
 
+from email.message import Message
 from email.parser import Parser
+
+from leap.common.check import leap_assert_type
 
 
 class MailParser(object):
@@ -43,6 +47,17 @@ class MailParser(object):
         """
         msg = self._get_parser_fun(raw)(raw, True)
         return msg
+
+    def _get_hash(self, msg):
+        """
+        Returns a hash of the string representation of the raw message,
+        suitable for indexing the inmutable pieces.
+
+        :param msg: a Message object
+        :type msg: Message
+        """
+        leap_assert_type(msg, Message)
+        return hashlib.sha256(msg.as_string()).hexdigest()
 
     def _get_parser_fun(self, o):
         """
@@ -67,6 +82,8 @@ class MailParser(object):
         :param o: object
         :type o: object
         """
+        # XXX Maybe we don't need no more, we're using
+        # msg.as_string()
         if isinstance(o, (cStringIO.OutputType, StringIO.StringIO)):
             return o.getvalue()
         else:
