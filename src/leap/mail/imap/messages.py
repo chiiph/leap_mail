@@ -403,7 +403,7 @@ class LeapMessage(fields, MailParser, MBoxParser):
 
     # XXX to be used in the messagecopier interface?!
 
-    def _set_uid(self, uid):
+    def set_uid(self, uid):
         """
         Set new uid for this message.
 
@@ -416,7 +416,7 @@ class LeapMessage(fields, MailParser, MBoxParser):
         d.content[self.UID_KEY] = uid
         self._soledad.put_doc(d)
 
-    def _set_mbox(self, mbox):
+    def set_mbox(self, mbox):
         """
         Set new mbox for this message.
 

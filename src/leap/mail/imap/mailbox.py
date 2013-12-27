@@ -45,9 +45,14 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
     The low-level database methods are contained in MessageCollection class,
     which we instantiate and make accessible in the `messages` attribute.
     """
-    implements(imap4.IMailboxInfo, imap4.IMailbox, imap4.ICloseableMailbox)
+    implements(
+        imap4.IMailbox,
+        imap4.IMailboxInfo,
+        imap4.ICloseableMailbox,
+        imap4.IMessageCopier)
+
     # XXX should finish the implementation of IMailboxListener
-    # XXX should implement IMessageCopier too
+    # XXX should implement ISearchableMailbox too
 
     messages = None
     _closed = False
@@ -589,15 +594,21 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
         self.expunge()
         self.closed = True
 
-    #@deferred
-    #def copy(self, messageObject):
-        #"""
-        #Copy the given message object into this mailbox.
-        #"""
-        # XXX should just:
-        # 1. Get the message._fdoc
-        # 2. Change the UID to UIDNext for this mailbox
-        # 3. Add implements IMessageCopier
+    # IMessageCopier
+
+    @deferred
+    def copy(self, messageObject):
+        """
+        Copy the given message object into this mailbox.
+        """
+        msg = messageObject
+
+        # XXX should use a public api instead
+        fdoc = msg._fdoc
+        uid_next = self.getUIDNext()
+        fdoc.content[self.UID_KEY] = uid_next
+        fdoc.content[self.MBOX_KEY] = self.mbox
+        self._soledad.put_doc(fdoc)
 
     # convenience fun
 
