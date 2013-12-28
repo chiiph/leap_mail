@@ -1,0 +1,6 @@
+- Defer costly operations to a pool of threads.
+- Split the internal representation of messages into four distinct documents:
+  1) Flags 2) Headers 3) Body 4) Attachments.
+- Add deduplication ability to the save operation, for body and attachments.
+- Add IMessageCopier interface to mailbox implementation, so bulk moves
+  are costless. Closes: #4654
