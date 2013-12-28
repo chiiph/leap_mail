@@ -17,6 +17,8 @@
 """
 Soledad Mailbox.
 """
+import copy
+import threading
 import logging
 import time
 
@@ -72,6 +74,7 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
     CMD_UNSEEN = "UNSEEN"
 
     _listeners = defaultdict(set)
+    next_uid_lock = threading.Lock()
 
     def __init__(self, mbox, soledad=None, rw=1):
         """
@@ -291,8 +294,9 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
 
         :rtype: int
         """
-        self.last_uid += 1
-        return self.last_uid
+        with self.next_uid_lock:
+            self.last_uid += 1
+            return self.last_uid
 
     def getMessageCount(self):
         """
@@ -382,11 +386,11 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
         else:
             flags = tuple(str(flag) for flag in flags)
 
-        d = self._do_add_messages(message, flags, date, uid_next)
+        d = self._do_add_message(message, flags, date, uid_next)
         d.addCallback(self._notify_new)
 
     @deferred
-    def _do_add_messages(self, message, flags, date, uid_next):
+    def _do_add_message(self, message, flags, date, uid_next):
         """
         Calls to the messageCollection add_msg method (deferred to thread).
         Invoked from addMessage.
@@ -588,6 +592,8 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
         for msg_id in messages:
             log.msg("MSG ID = %s" % msg_id)
             msg = self.messages.get_msg_by_uid(msg_id)
+            if not msg:
+                return result
             if mode == 1:
                 msg.addFlags(flags)
             elif mode == -1:
@@ -614,14 +620,29 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
         """
         Copy the given message object into this mailbox.
         """
+        uid_next = self.getUIDNext()
         msg = messageObject
 
         # XXX should use a public api instead
         fdoc = msg._fdoc
-        uid_next = self.getUIDNext()
-        fdoc.content[self.UID_KEY] = uid_next
-        fdoc.content[self.MBOX_KEY] = self.mbox
-        self._soledad.put_doc(fdoc)
+        if not fdoc:
+            logger.debug("Tried to copy a MSG with no fdoc")
+            return
+
+        new_fdoc = copy.deepcopy(fdoc.content)
+        new_fdoc[self.UID_KEY] = uid_next
+        new_fdoc[self.MBOX_KEY] = self.mbox
+
+        d = self._do_add_doc(new_fdoc)
+        d.addCallback(self._notify_new)
+
+    @deferred
+    def _do_add_doc(self, doc):
+        """
+        Defers the adding of a new doc.
+        :param doc: document to be created in soledad.
+        """
+        self._soledad.create_doc(doc)
 
     # convenience fun
 
