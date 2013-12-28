@@ -69,7 +69,11 @@ class MessageBody(object):
 
     def getBodyFile(self):
         fd = StringIO.StringIO()
-        body = self._bdoc.content[fields.BODY_KEY]
+
+        if self._bdoc:
+            body = self._bdoc.content[fields.BODY_KEY]
+        else:
+            body = ""
         charset = self._get_charset(body)
         try:
             body = body.encode(charset)
@@ -209,7 +213,6 @@ class MessageAttachment(object):
         :return: The specified sub-part.
         """
         return self._msg.get_payload()
-        #???[part]
 
 
 class LeapMessage(fields, MailParser, MBoxParser):
@@ -458,18 +461,23 @@ class LeapMessage(fields, MailParser, MBoxParser):
         else:
             cond = lambda key: key.upper() in names
 
+        head = copy.deepcopy(dict(headers.items()))
+
+            # twisted imap server expects headers to be lowercase
+        head = dict(
+            map(str, (key, value)) if key.lower() != "content-type"
+            else map(str, (key.lower(), value))
+            for (key, value) in head.items())
+
         # unpack and filter original dict by negate-condition
-        filter_by_cond = [
-            map(lambda s: str(s).lower(), (key, val)) for
-            key, val in headers.items()
-            if cond(key)]
+        filter_by_cond = [(key, val) for key, val in head.items() if cond(key)]
         return dict(filter_by_cond)
 
     def _get_headers(self):
         """
         Return the headers dict for this message.
         """
-        if self._hdoc:
+        if self._hdoc is not None:
             return self._hdoc.content.get(self.HEADERS_KEY, {})
         else:
             logger.warning(
@@ -558,6 +566,8 @@ class LeapMessage(fields, MailParser, MBoxParser):
         if not self.isMultipart():
             raise TypeError(
                 "Tried to get num parts in a non-multipart message")
+        if not self._hdoc:
+            return None
         return self._hdoc.content.get(fields.NUM_PARTS_KEY, 2)
 
     def _get_attachment_doc(self, part):
@@ -568,6 +578,8 @@ class LeapMessage(fields, MailParser, MBoxParser):
         :param part: the part number for the multipart message.
         :type part: int
         """
+        if not self._hdoc:
+            return None
         try:
             phash = self._hdoc.content[self.PARTS_MAP_KEY][str(part)]
         except KeyError:
@@ -645,25 +657,31 @@ class LeapMessage(fields, MailParser, MBoxParser):
 
     # destructor
 
+    @deferred
     def remove(self):
         """
         Remove all docs associated with this message.
         """
-        fd = self._get_flags_doc()
-        hd = self._get_headers_doc()
-        #bd = self._get_body_doc()
-        #docs = [fd, hd, bd]
-        docs = [fd, hd]
+        # XXX this would ve more efficient if we can just pass
+        # a sequence of uids.
 
         # XXX For the moment we are only removing the flags and headers
         # docs. The rest we leave there polluting your hard disk,
         # until we think about a good way of deorphaning.
         # Maybe a crawler of unreferenced docs.
 
+        fd = self._get_flags_doc()
+        hd = self._get_headers_doc()
+        #bd = self._get_body_doc()
+        #docs = [fd, hd, bd]
+
+        docs = [fd, hd]
+
         #for pn in range(self._get_num_parts()[1:]):
             #ad = self._get_attachment_doc(pn)
             #docs.append(ad)
-        for d in docs:
+
+        for d in filter(None, docs):
             self._soledad.delete_doc(d)
 
     def does_exist(self):

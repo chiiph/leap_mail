@@ -431,28 +431,21 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
         # we should postpone the removal
         self._soledad.delete_doc(self._get_mbox())
 
+    @deferred
     def expunge(self):
         """
         Remove all messages flagged \\Deleted
         """
         if not self.isWriteable():
             raise imap4.ReadOnlyMailbox
-        delete = []
         deleted = []
-
-        for m in self.messages.get_all_docs():
-            # XXX should operate with LeapMessages instead,
-            # so we don't expose the implementation.
-            # (so, iterate for m in self.messages)
-            if self.DELETED_FLAG in m.content[self.FLAGS_KEY]:
-                delete.append(m)
-        for m in delete:
-            deleted.append(m.content)
-            self.messages.remove(m)
-
-        # XXX should return the UIDs of the deleted messages
-        # more generically
-        return [x for x in range(len(deleted))]
+        for m in self.messages:
+            if self.DELETED_FLAG in m.getFlags():
+                self.messages.remove(m)
+                # XXX this would ve more efficient if we can just pass
+                # a sequence of uids.
+                deleted.append(m.getUID())
+        return deleted
 
     @deferred
     def fetch(self, messages, uid):
