@@ -782,6 +782,8 @@ class SoledadDocWriter(object):
         :type doc: dict
         :returns: True if that happens, False otherwise.
         """
+        if not doc:
+            return False
         chash = doc[fields.CONTENT_HASH_KEY]
         body_docs = self._soledad.get_from_index(
             fields.TYPE_C_HASH_IDX,
@@ -803,6 +805,8 @@ class SoledadDocWriter(object):
         :type doc: dict
         :returns: True if that happens, False otherwise.
         """
+        if not doc:
+            return False
         phash = doc[fields.PAYLOAD_HASH_KEY]
         attach_docs = self._soledad.get_from_index(
             fields.TYPE_P_HASH_IDX,
@@ -964,8 +968,20 @@ class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
         chash = self._get_hash(msg)
         multi = msg.is_multipart()
 
+        attaches = []
+        inner_parts = []
+
         if multi:
+            # XXX should walk down recursively
+            # in a better way.  but fixing this quick
+            # to have an rc.
+            # XXX should pick the content-type in txt
             body = first(msg.get_payload()).get_payload()
+            if isinstance(body, list):
+                # allowing one nesting level for now...
+                body, rest = body[0].get_payload(), body[1:]
+                for p in rest:
+                    inner_parts.append(p)
         else:
             body = msg.get_payload()
         logger.debug("adding msg (multipart:%s)" % multi)
@@ -1004,14 +1020,15 @@ class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
         bd[self.RAW_KEY] = raw_str
 
         docs = [fd, hd]
-        attaches = []
 
         # attachment docs
         if multi:
+            outer_parts = msg.get_payload()
+            parts = outer_parts + inner_parts
+
             # skip first part, we already got it in body
-            parts = ((i, m) for i, m in enumerate(msg.get_payload())
-                     if i > 0)
-            for index, part_msg in parts:
+            to_attach = ((i, m) for i, m in enumerate(parts) if i > 0)
+            for index, part_msg in to_attach:
                 att_doc = self._get_empty_doc(self.ATTACHMENT_DOC)
                 att_doc[self.PART_NUMBER_KEY] = index
                 att_doc[self.CONTENT_HASH_KEY] = chash
@@ -1026,7 +1043,7 @@ class MessageCollection(WithMsgFields, IndexedDB, MailParser, MBoxParser):
 
         # Saving ... -------------------------------
         # ok, there we go...
-        logger.debug('enqueuing message for write')
+        logger.debug('enqueuing message docs for write')
         ptuple = SoledadWriterPayload
 
         # first, regular docs: flags and headers
