@@ -21,6 +21,8 @@ import copy
 import threading
 import logging
 import time
+import StringIO
+import cStringIO
 
 from collections import defaultdict
 
@@ -378,6 +380,8 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
         :return: a deferred that evals to None
         """
         # XXX we should treat the message as an IMessage from here
+        if isinstance(message, (cStringIO.OutputType, StringIO.StringIO)):
+            message = message.getvalue()
         leap_assert_type(message, basestring)
         uid_next = self.getUIDNext()
         logger.debug('Adding msg with UID :%s' % uid_next)
@@ -388,6 +392,7 @@ class SoledadMailbox(WithMsgFields, MBoxParser):
 
         d = self._do_add_message(message, flags, date, uid_next)
         d.addCallback(self._notify_new)
+        return d
 
     @deferred
     def _do_add_message(self, message, flags, date, uid_next):

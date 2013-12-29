@@ -404,7 +404,7 @@ class LeapIncomingMail(object):
         """
         log.msg('decrypting multipart encrypted msg')
         msg = copy.deepcopy(msg)
-        self._multipart_sanity_check(msg)
+        self._msg_multipart_sanity_check(msg)
 
         # parse message and get encrypted content
         pgpencmsg = msg.get_payload()[1]
@@ -412,13 +412,13 @@ class LeapIncomingMail(object):
 
         # decrypt or fail gracefully
         try:
-            decrdata, valid_sig = yield self._decrypt_and_verify_data(
+            decrdata, valid_sig = self._decrypt_and_verify_data(
                 encdata, senderPubkey)
         except keymanager_errors.DecryptError as e:
             logger.warning('Failed to decrypt encrypted message (%s). '
                            'Storing message without modifications.' % str(e))
             # Bailing out!
-            yield (msg, False)
+            return (msg, False)
 
         # decrypted successully, now fix encoding and parse
         try:
@@ -441,7 +441,7 @@ class LeapIncomingMail(object):
 
         # all ok, replace payload by unencrypted payload
         msg.set_payload(decrmsg.get_payload())
-        yield (msg, valid_sig)
+        return (msg, valid_sig)
 
     def _maybe_decrypt_inline_encrypted_msg(self, origmsg, encoding,
                                             senderPubkey):
